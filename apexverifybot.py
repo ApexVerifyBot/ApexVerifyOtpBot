@@ -1,10 +1,12 @@
 import asyncio
 import fcntl
 import io
+import logging
+import os
 import re
 import json
 import html
-import os
+import shutil
 import signal
 import sys
 import tempfile
@@ -16,37 +18,121 @@ from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+ENV_FILE = ".env"
+if os.path.exists(ENV_FILE):
+    try:
+        with open(ENV_FILE, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                os.environ.setdefault(key.strip(), value.strip())
+    except Exception:
+        pass
+
 # ==================== CONFIG SECTION ====================
 
-BOT_TOKEN = "8873118288:AAF1lx-5qtlEJ6piwkWVnpv0Gm9TI8ntDao"
-API_KEY = "mino_live_4874ad7f7b954ad33109d844d7487651"
-BASE_URL = "https://mino-sms-panel.xyz"           # প্যানেল ডোমেন
-USER_DATA_FILE = "users.json"
-PAID_SMS_FILE = "paid_sms.json"
-STATS_FILE = "user_stats.json"
-REFERRAL_DATA_FILE = "referral_data.json"
-BANNED_USERS_FILE = "banned_users.json"
-WITHDRAW_DATA_FILE = "withdraw_requests.json"
-ACTIVITY_LOGS_FILE = "activity_logs.json"
-DATA_RANGE_FILE = "datarange.json"
-CUSTOM_SERVICES_FILE = "custom_services.json"
-SETTINGS_FILE = "bot_settings.json"
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8873118288:AAF1lx-5qtlEJ6piwkWVnpv0Gm9TI8ntDao")
+API_KEY = os.getenv("API_KEY", "mino_live_4874ad7f7b954ad33109d844d7487651")
+BASE_URL = os.getenv("BASE_URL", "https://mino-sms-panel.xyz")           # প্যানেল ডোমেন
+USER_DATA_FILE = os.getenv("USER_DATA_FILE", "users.json")
+PAID_SMS_FILE = os.getenv("PAID_SMS_FILE", "paid_sms.json")
+STATS_FILE = os.getenv("STATS_FILE", "user_stats.json")
+REFERRAL_DATA_FILE = os.getenv("REFERRAL_DATA_FILE", "referral_data.json")
+BANNED_USERS_FILE = os.getenv("BANNED_USERS_FILE", "banned_users.json")
+WITHDRAW_DATA_FILE = os.getenv("WITHDRAW_DATA_FILE", "withdraw_requests.json")
+ACTIVITY_LOGS_FILE = os.getenv("ACTIVITY_LOGS_FILE", "activity_logs.json")
+DATA_RANGE_FILE = os.getenv("DATA_RANGE_FILE", "datarange.json")
+CUSTOM_SERVICES_FILE = os.getenv("CUSTOM_SERVICES_FILE", "custom_services.json")
+SETTINGS_FILE = os.getenv("SETTINGS_FILE", "bot_settings.json")
 
 # ==================== MULTIPLE ADMINS CONFIGURATION ====================
-ADMINS = [8515316792, 8881717204]
+ADMINS = [int(x) for x in os.getenv("ADMINS", "8515316792,8881717204").split(",") if x.strip().isdigit()]
 
-OTP_GROUP_ID = -1003745723860
-OTP_GROUP_LINK = "https://t.me/+w_3QvV-NqM8wOGI9"
-OFFICIAL_CHANNEL_USERNAME = "ApexVerifyBotOfficial"
-OFFICIAL_CHANNEL_LINK = "https://t.me/ApexVerifyBotOfficial"
-PANEL_LINK = "https://t.me/ApexVerify_Bot"
-SUPPORT_LINK = "https://t.me/ApexVerifysupport"
-DEVELOPER_LINK = "https://t.me/KHALID_OFFICIAL_007"
+OTP_GROUP_ID = int(os.getenv("OTP_GROUP_ID", "-1003745723860"))
+OTP_GROUP_LINK = os.getenv("OTP_GROUP_LINK", "https://t.me/+w_3QvV-NqM8wOGI9")
+OFFICIAL_CHANNEL_USERNAME = os.getenv("OFFICIAL_CHANNEL_USERNAME", "ApexVerifyBotOfficial")
+OFFICIAL_CHANNEL_LINK = os.getenv("OFFICIAL_CHANNEL_LINK", "https://t.me/ApexVerifyBotOfficial")
+PANEL_LINK = os.getenv("PANEL_LINK", "https://t.me/ApexVerify_Bot")
+SUPPORT_LINK = os.getenv("SUPPORT_LINK", "https://t.me/ApexVerifysupport")
+DEVELOPER_LINK = os.getenv("DEVELOPER_LINK", "https://t.me/KHALID_OFFICIAL_007")
 
 # ==================== WELCOME MESSAGE CONFIGURATION ====================
 WELCOME_MESSAGE = """⚡ 𝗔𝗣𝗘𝗫 𝗩𝗘𝗥𝗜𝗙𝗬 𝗢𝗧𝗣 𝗕𝗢𝗧 ⚡ 
 ━━━━━━━━━━━━━━━━━━━━━━
 🟢 𝗣𝗿𝗲𝗺𝗶𝘂𝗺 & ⚡ 𝗙𝗮𝘀𝘁 𝗦𝗲𝗿𝘃𝗶𝗰𝗲 🟢"""
+
+LOG_FILE = os.getenv("LOG_FILE", "bot_errors.log")
+BACKUP_DIR = os.getenv("BACKUP_DIR", "backups")
+BACKUP_INTERVAL_HOURS = float(os.getenv("BACKUP_INTERVAL_HOURS", "6"))
+RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
+RATE_LIMIT_MAX = int(os.getenv("RATE_LIMIT_MAX_REQUESTS", "20"))
+BACKUP_FILES = [
+    USER_DATA_FILE,
+    PAID_SMS_FILE,
+    STATS_FILE,
+    REFERRAL_DATA_FILE,
+    BANNED_USERS_FILE,
+    WITHDRAW_DATA_FILE,
+    ACTIVITY_LOGS_FILE,
+    DATA_RANGE_FILE,
+    CUSTOM_SERVICES_FILE,
+    SETTINGS_FILE,
+]
+
+BOT_SETTINGS = {}
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+log_formatter = logging.Formatter("[%(asctime)s] %(levelname)s %(name)s: %(message)s")
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setFormatter(log_formatter)
+logger.addHandler(console_handler)
+
+try:
+    file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
+    file_handler.setFormatter(log_formatter)
+    logger.addHandler(file_handler)
+except Exception:
+    logger.exception("Unable to initialize file logging")
+
+RATE_LIMIT_STATE = {}
+
+
+def save_json(filename, data):
+    try:
+        temp_path = f"{filename}.tmp"
+        with open(temp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4)
+        os.replace(temp_path, filename)
+    except Exception:
+        logger.exception("Failed to save JSON to %s", filename)
+
+
+def safe_load_json(filename, default):
+    if not os.path.exists(filename):
+        save_json(filename, default)
+        return default
+    try:
+        with open(filename, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        logger.exception("Corrupted JSON file detected, backing up and resetting: %s", filename)
+        try:
+            backup_file(filename)
+            save_json(filename, default)
+        except Exception:
+            logger.exception("Failed to recover corrupted file: %s", filename)
+        return default
 
 # ==================== OTP RATE CONFIGURATION ====================
 OTP_RATE = 0.00
@@ -59,6 +145,105 @@ BOT_SETTINGS = {}
 
 request_queue = asyncio.Queue()
 MAX_WORKERS = 50000000000000000000000000000
+
+
+def ensure_backup_dir():
+    try:
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+    except Exception:
+        logger.exception("Failed to create backup directory: %s", BACKUP_DIR)
+
+
+def backup_file(filename):
+    if not filename or not os.path.exists(filename):
+        return
+    ensure_backup_dir()
+    try:
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        basename = os.path.basename(filename)
+        backup_name = f"{basename}.{timestamp}.bak"
+        backup_path = os.path.join(BACKUP_DIR, backup_name)
+        shutil.copy2(filename, backup_path)
+        logger.info("Backup created: %s", backup_path)
+    except Exception:
+        logger.exception("Failed to backup %s", filename)
+
+
+def backup_all_data_files():
+    for filename in BACKUP_FILES:
+        backup_file(filename)
+
+
+async def backup_worker():
+    while True:
+        await asyncio.sleep(BACKUP_INTERVAL_HOURS * 3600)
+        backup_all_data_files()
+
+
+def is_rate_limited(uid, action, limit=RATE_LIMIT_MAX, window=RATE_LIMIT_WINDOW):
+    now = datetime.utcnow().timestamp()
+    key = f"{uid}:{action}"
+    entry = RATE_LIMIT_STATE.get(key, {"count": 0, "window_start": now})
+    if now - entry["window_start"] > window:
+        entry = {"count": 0, "window_start": now}
+    entry["count"] += 1
+    RATE_LIMIT_STATE[key] = entry
+    return entry["count"] > limit, entry["count"]
+
+
+async def enforce_rate_limit(update, context, action, via_query=False):
+    uid = update.effective_user.id
+    limited, count = is_rate_limited(uid, action)
+    if limited:
+        message = f"❌ Too many requests. Please wait {RATE_LIMIT_WINDOW} seconds."
+        logger.warning("Rate limited %s on %s (%s/%s)", uid, action, count, RATE_LIMIT_MAX)
+        if via_query and update.callback_query:
+            await update.callback_query.answer(message, show_alert=True)
+        elif update.message:
+            await update.message.reply_text(message, reply_markup=main_keyboard(uid))
+        return True
+    return False
+
+
+async def ensure_group_membership_query(update, context):
+    uid = update.callback_query.from_user.id
+    try:
+        chat_member = await context.bot.get_chat_member(OTP_GROUP_ID, uid)
+        status = getattr(chat_member, "status", "")
+        if membership_allows_access(status):
+            return True
+    except Exception as e:
+        logger.warning("Group membership query check failed for %s: %s", uid, e)
+
+    if update.callback_query:
+        await update.callback_query.answer("⚠️ You must join the OTP group first.", show_alert=True)
+        try:
+            await update.callback_query.message.reply_text(
+                "⚠️ <b>PLEASE JOIN THE OTP GROUP FIRST</b> ⚠️\n\nJoin the group and then use /start again.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔗 JOIN OTP GROUP", url=OTP_GROUP_LINK, style="primary")],
+                    [InlineKeyboardButton("📢 OFFICIAL CHANNEL", url=OFFICIAL_CHANNEL_LINK, style="primary")],
+                    [InlineKeyboardButton("🧩 PANEL", url=PANEL_LINK, style="primary")]
+                ])
+            )
+        except Exception:
+            pass
+    return False
+
+
+async def error_handler(update, context):
+    logger.exception("Unhandled error in update: %s", update)
+    if update and update.effective_user:
+        uid = update.effective_user.id
+        try:
+            await context.bot.send_message(
+                chat_id=uid,
+                text="🚨 An unexpected error occurred. The administrators have been notified.",
+            )
+        except Exception:
+            pass
+
 
 # অত্যন্ত দ্রুত এপিআই রিকোয়েস্ট নিশ্চিত করতে অপ্টিমাইজড ক্লায়েন্ট সেটিংস ও টাইমআউট বৃদ্ধি
 client_async = httpx.AsyncClient(
@@ -231,14 +416,9 @@ def load_settings():
         "max_withdraw": MAX_WITHDRAW,
     }
     BOT_SETTINGS = defaults.copy()
-    if os.path.exists(SETTINGS_FILE):
-        try:
-            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-                loaded = json.load(f)
-            if isinstance(loaded, dict):
-                BOT_SETTINGS.update(loaded)
-        except Exception:
-            pass
+    loaded = safe_load_json(SETTINGS_FILE, defaults)
+    if isinstance(loaded, dict):
+        BOT_SETTINGS.update(loaded)
     OTP_RATE = float(BOT_SETTINGS.get("otp_rate", OTP_RATE))
     REFERRAL_PRICE = float(BOT_SETTINGS.get("referral_price", REFERRAL_PRICE))
     MIN_WITHDRAW = float(BOT_SETTINGS.get("min_withdraw", MIN_WITHDRAW))
@@ -255,8 +435,7 @@ def save_settings(data=None):
     REFERRAL_PRICE = float(BOT_SETTINGS.get("referral_price", REFERRAL_PRICE))
     MIN_WITHDRAW = float(BOT_SETTINGS.get("min_withdraw", MIN_WITHDRAW))
     MAX_WITHDRAW = float(BOT_SETTINGS.get("max_withdraw", MAX_WITHDRAW))
-    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(BOT_SETTINGS, f, indent=4)
+    save_json(SETTINGS_FILE, BOT_SETTINGS)
     return BOT_SETTINGS
 
 
@@ -269,19 +448,10 @@ load_settings()
 # ==================== WITHDRAW DATA FUNCTIONS ====================
 
 def load_withdraw_requests():
-    if not os.path.exists(WITHDRAW_DATA_FILE):
-        with open(WITHDRAW_DATA_FILE, "w") as f:
-            json.dump({}, f)
-        return {}
-    try:
-        with open(WITHDRAW_DATA_FILE, "r") as f:
-            return json.load(f)
-    except:
-        return {}
+    return safe_load_json(WITHDRAW_DATA_FILE, {})
 
 def save_withdraw_requests(data):
-    with open(WITHDRAW_DATA_FILE, "w") as f:
-        json.dump(data, f, indent=4)
+    save_json(WITHDRAW_DATA_FILE, data)
 
 def generate_payment_id():
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=20))
@@ -289,19 +459,10 @@ def generate_payment_id():
 # ==================== BANNED USERS FUNCTIONS ====================
 
 def load_banned_users():
-    if not os.path.exists(BANNED_USERS_FILE):
-        with open(BANNED_USERS_FILE, "w") as f:
-            json.dump([], f)
-        return []
-    try:
-        with open(BANNED_USERS_FILE, "r") as f:
-            return json.load(f)
-    except:
-        return []
+    return safe_load_json(BANNED_USERS_FILE, [])
 
 def save_banned_users(banned_list):
-    with open(BANNED_USERS_FILE, "w") as f:
-        json.dump(banned_list, f, indent=4)
+    save_json(BANNED_USERS_FILE, banned_list)
 
 def is_user_banned(uid):
     banned_list = load_banned_users()
@@ -328,19 +489,10 @@ def unban_user(uid):
 # ==================== REFERRAL DATA FUNCTIONS ====================
 
 def load_referral_data():
-    if not os.path.exists(REFERRAL_DATA_FILE):
-        with open(REFERRAL_DATA_FILE, "w") as f:
-            json.dump({}, f)
-        return {}
-    try:
-        with open(REFERRAL_DATA_FILE, "r") as f:
-            return json.load(f)
-    except:
-        return {}
+    return safe_load_json(REFERRAL_DATA_FILE, {})
 
 def save_referral_data(data):
-    with open(REFERRAL_DATA_FILE, "w") as f:
-        json.dump(data, f, indent=4)
+    save_json(REFERRAL_DATA_FILE, data)
 
 def update_referral_count(uid, count):
     referral_data = load_referral_data()
@@ -358,17 +510,10 @@ def get_referral_count(uid):
 # ==================== DATA RANGE FILE ====================
 
 def load_range_db():
-    if not os.path.exists(DATA_RANGE_FILE):
-        return {}
-    try:
-        with open(DATA_RANGE_FILE, "r") as f:
-            return json.load(f)
-    except:
-        return {}
+    return safe_load_json(DATA_RANGE_FILE, {})
 
 def save_range_db(data):
-    with open(DATA_RANGE_FILE, "w") as f:
-        json.dump(data, f, indent=4)
+    save_json(DATA_RANGE_FILE, data)
 
 def save_number_range_info(uid, number, range_text):
     db = load_range_db()
@@ -384,19 +529,10 @@ def save_number_range_info(uid, number, range_text):
 # ==================== CUSTOM SERVICE CONFIG ====================
 
 def load_custom_services():
-    if not os.path.exists(CUSTOM_SERVICES_FILE):
-        with open(CUSTOM_SERVICES_FILE, "w") as f:
-            json.dump([], f)
-        return []
-    try:
-        with open(CUSTOM_SERVICES_FILE, "r") as f:
-            return json.load(f)
-    except:
-        return {}
+    return safe_load_json(CUSTOM_SERVICES_FILE, [])
 
 def save_custom_services(data):
-    with open(CUSTOM_SERVICES_FILE, "w") as f:
-        json.dump(data, f, indent=4)
+    save_json(CUSTOM_SERVICES_FILE, data)
 
 # ==================== COUNTRY MAPPING SECTION ====================
 
@@ -835,19 +971,10 @@ def is_state_cancelling_input(text_input):
 # ==================== DATABASE FUNCTIONS SECTION ====================
 
 def load_data(filename=USER_DATA_FILE):
-    if not os.path.exists(filename):
-        with open(filename, "w") as f:
-            json.dump({}, f)
-        return {}
-    try:
-        with open(filename, "r") as f:
-            return json.load(f)
-    except:
-        return {}
+    return safe_load_json(filename, {})
 
 def save_data(data, filename=USER_DATA_FILE):
-    with open(filename, "w") as f:
-        json.dump(data, f, indent=4)
+    save_json(filename, data)
 
 def get_user(uid):
     uid = str(uid)
@@ -877,19 +1004,10 @@ def user_exists(uid):
 # ==================== STATS FUNCTIONS SECTION ====================
 
 def load_stats():
-    if not os.path.exists(STATS_FILE):
-        with open(STATS_FILE, "w") as f:
-            json.dump({}, f)
-        return {}
-    try:
-        with open(STATS_FILE, "r") as f:
-            return json.load(f)
-    except:
-        return {}
+    return safe_load_json(STATS_FILE, {})
 
 def save_stats(stats):
-    with open(STATS_FILE, "w") as f:
-        json.dump(stats, f, indent=4)
+    save_json(STATS_FILE, stats)
 
 def add_number_taken(uid, count=1):
     uid = str(uid)
@@ -963,14 +1081,7 @@ def get_user_stats(uid):
     }
 
 def log_global_activity(uid, action, details):
-    if not os.path.exists(ACTIVITY_LOGS_FILE):
-        with open(ACTIVITY_LOGS_FILE, "w") as f:
-            json.dump([], f)
-    try:
-        with open(ACTIVITY_LOGS_FILE, "r") as f:
-            logs = json.load(f)
-    except:
-        logs = []
+    logs = safe_load_json(ACTIVITY_LOGS_FILE, [])
     now = get_bangladesh_time()
     logs.append({
         "uid": str(uid), "action": action, "details": details,
@@ -978,8 +1089,7 @@ def log_global_activity(uid, action, details):
         "date": now.strftime("%d/%m/%Y"),
         "time": now.strftime("%H:%M:%S")
     })
-    with open(ACTIVITY_LOGS_FILE, "w") as f:
-        json.dump(logs, f, indent=4)
+    save_json(ACTIVITY_LOGS_FILE, logs)
 
 def get_global_system_stats():
     stats = load_stats()
@@ -1969,6 +2079,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     raw_text = update.message.text.strip() if update.message.text else ""
     
+    if not is_admin(uid) and await enforce_rate_limit(update, context, "TEXT_MESSAGE"):
+        return
+
     # হোয়াইট বোল্ড স্টাইলিস্ট ইউনিকোড লেখাকে নরমাল ডিকোড করার স্মার্ট মেথড
     text = normalize_stylized_text(raw_text).strip()
 
@@ -2463,12 +2576,16 @@ async def get1number_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if is_user_banned(uid):
         await update.message.reply_text("🚫 YOU ARE BANNED 🚫", reply_markup=main_keyboard(uid))
         return
+    if not is_admin(uid) and await enforce_rate_limit(update, context, "GET_NUMBER"):
+        return
     await show_app_selection(update, context)
 
 async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if is_user_banned(uid):
         await update.message.reply_text("🚫 YOU ARE BANNED 🚫", reply_markup=main_keyboard(uid))
+        return
+    if not is_admin(uid) and await enforce_rate_limit(update, context, "BALANCE"):
         return
     balance = get_user(uid)['balance']
     await update.message.reply_text(f"💰 BALANCE: `{format_balance(balance)} BDT`", parse_mode="Markdown", reply_markup=main_keyboard(uid))
@@ -2477,6 +2594,8 @@ async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if is_user_banned(uid):
         await update.message.reply_text("🚫 YOU ARE BANNED 🚫", reply_markup=main_keyboard(uid))
+        return
+    if not is_admin(uid) and await enforce_rate_limit(update, context, "PROFILE"):
         return
     user_data = get_user(uid)
     stats = get_user_stats(uid)
@@ -2501,12 +2620,16 @@ async def refer_command_slash(update: Update, context: ContextTypes.DEFAULT_TYPE
     if is_user_banned(uid):
         await update.message.reply_text("🚫 YOU ARE BANNED 🚫", reply_markup=main_keyboard(uid))
         return
+    if not is_admin(uid) and await enforce_rate_limit(update, context, "REFER_AND_EARN"):
+        return
     await refer_command(update, context)
 
 async def leaderboard_command_slash(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if is_user_banned(uid):
         await update.message.reply_text("🚫 YOU ARE BANNED 🚫", reply_markup=main_keyboard(uid))
+        return
+    if not is_admin(uid) and await enforce_rate_limit(update, context, "LEADERBOARD"):
         return
     await leaderboard_command(update, context)
 
@@ -2541,6 +2664,9 @@ async def ensure_group_membership(update, context):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     uid_str = str(uid)
+
+    if not is_admin(uid) and await enforce_rate_limit(update, context, "START"):
+        return
 
     existing_data = load_data(USER_DATA_FILE)
     is_new_user = uid_str not in existing_data
@@ -2585,6 +2711,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = query.from_user.id
     data = query.data
     await query.answer()
+
+    if not is_admin(uid) and await enforce_rate_limit(update, context, f"CALLBACK_{data}", via_query=True):
+        return
 
     if not is_admin(uid) and is_user_banned(uid):
         await query.edit_message_text("🚫 YOU ARE BANNED 🚫")
@@ -3192,6 +3321,7 @@ async def post_init(application):
     for _ in range(20):
         asyncio.create_task(worker())
     asyncio.create_task(monitor_loop(application))
+    asyncio.create_task(backup_worker())
 
 
 def ensure_single_instance():
