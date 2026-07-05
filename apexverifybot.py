@@ -67,9 +67,13 @@ SUPPORT_LINK = os.getenv("SUPPORT_LINK", "https://t.me/ApexVerifysupport")
 DEVELOPER_LINK = os.getenv("DEVELOPER_LINK", "https://t.me/KHALID_OFFICIAL_007")
 
 # ==================== WELCOME MESSAGE CONFIGURATION ====================
-WELCOME_MESSAGE = """⚡ 𝗔𝗣𝗘𝗫 𝗩𝗘𝗥𝗜𝗙𝗬 𝗢𝗧𝗣 𝗕𝗢𝗧 ⚡ 
+BOT_NAME = os.getenv("BOT_NAME", "Apex Verify OTP Bot")
+BOT_VERSION = os.getenv("BOT_VERSION", "1.2.0")
+
+WELCOME_MESSAGE = f"""⚡ 𝗔𝗣𝗘𝗫 𝗩𝗘𝗥𝗜𝗙𝗬 𝗢𝗧𝗣 𝗕𝗢𝗧 ⚡ 
 ━━━━━━━━━━━━━━━━━━━━━━
-🟢 𝗣𝗿𝗲𝗺𝗶𝘂𝗺 & ⚡ 𝗙𝗮𝘀𝘁 𝗦𝗲𝗿𝘃𝗶𝗰𝗲 🟢"""
+🟢 𝗣𝗿𝗲𝗺𝗶𝘂𝗺 & ⚡ 𝗙𝗮𝘀𝘁 𝗦𝗲𝗿𝘃𝗶𝗰𝗲 🟢
+🔖 VERSION: {BOT_VERSION}"""
 
 LOG_FILE = os.getenv("LOG_FILE", "bot_errors.log")
 BACKUP_DIR = os.getenv("BACKUP_DIR", "backups")
@@ -953,7 +957,8 @@ def get_admin_panel_text():
         f"🔑 <b>Processed OTPs:</b> <code>{total_otps}</code>\n"
         f"🚫 <b>Banned Accounts:</b> <code>{banned}</code>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "💎 <i>Mino X SMS Bot • Live & Operating</i>"
+        f"🔖 <b>BOT VERSION:</b> <code>{BOT_VERSION}</code>\n"
+        f"💎 <i>{BOT_NAME} • Live & Operating</i>"
     )
     return text
 
@@ -2700,6 +2705,17 @@ async def refer_command_slash(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     await refer_command(update, context)
 
+async def version_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    await update.message.reply_text(
+        f"🔖 <b>{BOT_NAME}</b>\n"
+        f"<b>VERSION:</b> <code>{BOT_VERSION}</code>\n"
+        f"<b>Support:</b> <a href=\"{SUPPORT_LINK}\">Contact Support</a>",
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+        reply_markup=main_keyboard(uid)
+    )
+
 async def leaderboard_command_slash(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if is_user_banned(uid):
@@ -3438,6 +3454,7 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).concurrent_updates(True).post_init(post_init).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("version", version_command))
     app.add_error_handler(error_handler)
     app.add_handler(CommandHandler("get1number", get1number_command))
     app.add_handler(CommandHandler("balance", balance_command))
