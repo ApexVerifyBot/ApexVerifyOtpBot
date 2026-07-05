@@ -1,9 +1,13 @@
 import asyncio
+import fcntl
 import io
 import re
 import json
 import html
 import os
+import signal
+import sys
+import tempfile
 import httpx
 import pyotp
 import random
@@ -14,8 +18,8 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, Con
 
 # ==================== CONFIG SECTION ====================
 
-BOT_TOKEN = "8312212025:AAGQVy_EzFkFqlcqsSsi8r4yPDAQw_01dFw"
-API_KEY = "api_key_by_mino"
+BOT_TOKEN = "8873118288:AAF1lx-5qtlEJ6piwkWVnpv0Gm9TI8ntDao"
+API_KEY = "mino_live_4874ad7f7b954ad33109d844d7487651"
 BASE_URL = "https://mino-sms-panel.xyz"           # প্যানেল ডোমেন
 USER_DATA_FILE = "users.json"
 PAID_SMS_FILE = "paid_sms.json"
@@ -26,14 +30,21 @@ WITHDRAW_DATA_FILE = "withdraw_requests.json"
 ACTIVITY_LOGS_FILE = "activity_logs.json"
 DATA_RANGE_FILE = "datarange.json"
 CUSTOM_SERVICES_FILE = "custom_services.json"
+SETTINGS_FILE = "bot_settings.json"
 
 # ==================== MULTIPLE ADMINS CONFIGURATION ====================
-ADMINS = [7940416120]
+ADMINS = [8515316792, 8881717204]
 
-OTP_GROUP_ID = -1003768160049
+OTP_GROUP_ID = -1003745723860
+OTP_GROUP_LINK = "https://t.me/+w_3QvV-NqM8wOGI9"
+OFFICIAL_CHANNEL_USERNAME = "ApexVerifyBotOfficial"
+OFFICIAL_CHANNEL_LINK = "https://t.me/ApexVerifyBotOfficial"
+PANEL_LINK = "https://t.me/ApexVerify_Bot"
+SUPPORT_LINK = "https://t.me/ApexVerifysupport"
+DEVELOPER_LINK = "https://t.me/KHALID_OFFICIAL_007"
 
 # ==================== WELCOME MESSAGE CONFIGURATION ====================
-WELCOME_MESSAGE = """⚡ 𝗠𝗜𝗡𝗢 𝗦𝗠𝗦 𝗣𝗔𝗡𝗘𝗟 𝗕𝗢𝗧 ⚡ 
+WELCOME_MESSAGE = """⚡ 𝗔𝗣𝗘𝗫 𝗩𝗘𝗥𝗜𝗙𝗬 𝗢𝗧𝗣 𝗕𝗢𝗧 ⚡ 
 ━━━━━━━━━━━━━━━━━━━━━━
 🟢 𝗣𝗿𝗲𝗺𝗶𝘂𝗺 & ⚡ 𝗙𝗮𝘀𝘁 𝗦𝗲𝗿𝘃𝗶𝗰𝗲 🟢"""
 
@@ -44,9 +55,7 @@ OTP_RATE = 0.00
 REFERRAL_PRICE = 0
 MIN_WITHDRAW = 50
 MAX_WITHDRAW = 10000
-
-# ==================== SUPPORT LINK (EDITABLE) ====================
-SUPPORT_LINK = "https://t.me/MinoXSupport0"      # সাপোর্ট লিংক পরিবর্তনযোগ্য
+BOT_SETTINGS = {}
 
 request_queue = asyncio.Queue()
 MAX_WORKERS = 50000000000000000000000000000
@@ -173,10 +182,89 @@ def clean_country_display(val):
         return ""
     return re.sub(r'\s+', ' ', str(val)).strip().lower()
 
+
+def normalize_menu_text(text):
+    if text is None:
+        return ""
+    normalized = normalize_stylized_text(str(text))
+    normalized = re.sub(r'[^A-Za-z0-9\s]', ' ', normalized)
+    normalized = re.sub(r'\s+', ' ', normalized).strip().upper()
+    return normalized
+
+
+def get_menu_action(text):
+    normalized = normalize_menu_text(text)
+    if not normalized:
+        return None
+    if normalized in {"GET NUMBER", "GETNUMBER"}:
+        return "GET NUMBER"
+    if normalized in {"REFER AND EARN", "REFER EARN"}:
+        return "REFER AND EARN"
+    if normalized == "PROFILE":
+        return "PROFILE"
+    if normalized == "LEADERBOARD":
+        return "LEADERBOARD"
+    if normalized == "SUPPORT":
+        return "SUPPORT"
+    if normalized in {"ADMIN PANEL", "ADMIN"}:
+        return "ADMIN PANEL"
+    if normalized == "CANCEL":
+        return "CANCEL"
+    return None
+
 # ==================== CHECK IF USER IS ADMIN ====================
 
 def is_admin(user_id):
     return user_id in ADMINS
+
+
+def membership_allows_access(status):
+    return status in {"member", "administrator", "creator"}
+
+
+def load_settings():
+    global BOT_SETTINGS, OTP_RATE, REFERRAL_PRICE, MIN_WITHDRAW, MAX_WITHDRAW
+    defaults = {
+        "otp_rate": OTP_RATE,
+        "referral_price": REFERRAL_PRICE,
+        "min_withdraw": MIN_WITHDRAW,
+        "max_withdraw": MAX_WITHDRAW,
+    }
+    BOT_SETTINGS = defaults.copy()
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                BOT_SETTINGS.update(loaded)
+        except Exception:
+            pass
+    OTP_RATE = float(BOT_SETTINGS.get("otp_rate", OTP_RATE))
+    REFERRAL_PRICE = float(BOT_SETTINGS.get("referral_price", REFERRAL_PRICE))
+    MIN_WITHDRAW = float(BOT_SETTINGS.get("min_withdraw", MIN_WITHDRAW))
+    MAX_WITHDRAW = float(BOT_SETTINGS.get("max_withdraw", MAX_WITHDRAW))
+    return BOT_SETTINGS
+
+
+def save_settings(data=None):
+    global BOT_SETTINGS, OTP_RATE, REFERRAL_PRICE, MIN_WITHDRAW, MAX_WITHDRAW
+    if data is None:
+        data = BOT_SETTINGS
+    BOT_SETTINGS.update(data)
+    OTP_RATE = float(BOT_SETTINGS.get("otp_rate", OTP_RATE))
+    REFERRAL_PRICE = float(BOT_SETTINGS.get("referral_price", REFERRAL_PRICE))
+    MIN_WITHDRAW = float(BOT_SETTINGS.get("min_withdraw", MIN_WITHDRAW))
+    MAX_WITHDRAW = float(BOT_SETTINGS.get("max_withdraw", MAX_WITHDRAW))
+    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(BOT_SETTINGS, f, indent=4)
+    return BOT_SETTINGS
+
+
+def get_setting(key, default=None):
+    return BOT_SETTINGS.get(key, default)
+
+
+load_settings()
 
 # ==================== WITHDRAW DATA FUNCTIONS ====================
 
@@ -637,6 +725,9 @@ def build_system_config_inline_keyboard():
         [
             InlineKeyboardButton(make_bold_unicode("➕ ADD BALANCE"), callback_data="adm_sys_add_bal", style="success"),
             InlineKeyboardButton(make_bold_unicode("➖ REMOVE BALANCE"), callback_data="adm_sys_rem_bal", style="danger")
+        ],
+        [
+            InlineKeyboardButton(make_bold_unicode("⚙️ BOT SETTINGS"), callback_data="adm_sys_bot_settings", style="primary")
         ],
         [InlineKeyboardButton(make_bold_unicode("🔙 BACK"), callback_data="adm_menu_back_to_admin", style="danger")]
     ]
@@ -1159,8 +1250,8 @@ async def monitor_loop(app):
 
                         group_buttons = InlineKeyboardMarkup([
                             [
-                                InlineKeyboardButton("‼️ PANEL", url="https://t.me/MinoXSupport0", style="primary"),
-                                InlineKeyboardButton("📢 CHANNEL", url="https://t.me/MinoXSupport0", style="primary")
+                                InlineKeyboardButton("‼️ PANEL", url=PANEL_LINK, style="primary"),
+                                InlineKeyboardButton("📢 CHANNEL", url=OFFICIAL_CHANNEL_LINK, style="primary")
                             ]
                         ])
 
@@ -1331,7 +1422,8 @@ async def fast_allocate_number_multi(query, context, ranges_list, sid):
 
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔄 SAME RANGE", callback_data="same_range", style="primary")],
-        [InlineKeyboardButton("📢 OTP GROUP", url="https://t.me/MinoXSupport0", style="primary")]
+        [InlineKeyboardButton("📢 OTP GROUP", url=OTP_GROUP_LINK, style="primary")],
+        [InlineKeyboardButton("📣 OFFICIAL CHANNEL", url=OFFICIAL_CHANNEL_LINK, style="primary")]
     ])
     try:
         await query.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
@@ -1405,7 +1497,8 @@ async def process_auto_number(update, context, range_text):
 
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔄 SAME RANGE", callback_data="same_range", style="primary")],
-            [InlineKeyboardButton("📢 OTP GROUP", url="https://t.me/MinoXSupport0", style="primary")]
+            [InlineKeyboardButton("📢 OTP GROUP", url=OTP_GROUP_LINK, style="primary")],
+            [InlineKeyboardButton("📣 OFFICIAL CHANNEL", url=OFFICIAL_CHANNEL_LINK, style="primary")]
         ])
         await status_msg.edit_text(final_text, parse_mode="HTML", reply_markup=keyboard)
 
@@ -1490,7 +1583,8 @@ async def process_numbers(update_or_query, context, range_text, count):
 
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔄 SAME RANGE", callback_data="same_range", style="primary")],
-            [InlineKeyboardButton("📢 OTP GROUP", url="https://t.me/MinoXSupport0", style="primary")]
+            [InlineKeyboardButton("📢 OTP GROUP", url=OTP_GROUP_LINK, style="primary")],
+            [InlineKeyboardButton("📣 OFFICIAL CHANNEL", url=OFFICIAL_CHANNEL_LINK, style="primary")]
         ])
 
         await status_msg.edit_text(final_text, parse_mode="HTML", reply_markup=keyboard)
@@ -2065,6 +2159,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             return
 
+    if context.user_data.get("admin_state") == "waiting_for_bot_settings" and is_admin(uid):
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        values = {}
+        for line in lines:
+            if " " not in line:
+                continue
+            key, value = line.split(" ", 1)
+            if key in {"otp_rate", "referral_price", "min_withdraw", "max_withdraw"}:
+                try:
+                    values[key] = float(value)
+                except ValueError:
+                    pass
+        if values:
+            save_settings(values)
+            await update.message.reply_text(
+                "✅ <b>BOT SETTINGS UPDATED</b> ✅\n\n" + "\n".join(f"{k}: {get_setting(k)}" for k in ["otp_rate", "referral_price", "min_withdraw", "max_withdraw"] if k in values),
+                parse_mode="HTML",
+                reply_markup=main_keyboard(uid)
+            )
+        else:
+            await update.message.reply_text("⚠️ INVALID SETTINGS FORMAT. Please try again.", reply_markup=main_keyboard(uid))
+        context.user_data["admin_state"] = None
+        return
+
     # Withdraw flow
     if context.user_data.get("withdraw_mode") == "select_method":
         await withdraw_method_selected(update, context)
@@ -2130,8 +2248,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ CANCELLED", reply_markup=main_keyboard(uid))
         return
 
+    action = get_menu_action(text)
+
+    if action in {"GET NUMBER", "REFER AND EARN", "PROFILE", "LEADERBOARD", "SUPPORT", "ADMIN PANEL"}:
+        if not await ensure_group_membership(update, context):
+            return
+
     # PROFILE বাটন ডিটেকশন (এখান থেকেই ব্যালেন্স এবং উইথড্র ইনলাইন বাটন হ্যান্ডেল করা হয়েছে)
-    if "PROFILE" in text:
+    if action == "PROFILE":
         user_data = get_user(uid)
         stats = get_user_stats(uid)
         user = update.effective_user
@@ -2167,29 +2291,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(profile_text, parse_mode="HTML", reply_markup=keyboard)
         return
 
-    if "REFER AND EARN" in text:
+    if action == "REFER AND EARN":
         await refer_command(update, context)
         return
 
-    if "GET NUMBER" in text:
+    if action == "GET NUMBER":
         await show_app_selection(update, context)
         return
 
-    if "LEADERBOARD" in text:
+    if action == "LEADERBOARD":
         await leaderboard_command(update, context)
         return
 
-    if "SUPPORT" in text:
+    if action == "SUPPORT":
         support_text = "💬 SUPPORT PANEL 🎧\n\nCLICK THE BUTTONS BELOW TO CONTACT SUPPORT"
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("💬 SUPPORT", url=SUPPORT_LINK, style="primary")],
-            [InlineKeyboardButton("👨‍💻 DEVELOPER", url="https://t.me/MinoXSupport0", style="danger")]
+            [InlineKeyboardButton("👨‍💻 DEVELOPER", url=DEVELOPER_LINK, style="danger")]
         ])
         await update.message.reply_text(support_text, reply_markup=keyboard, parse_mode="Markdown")
         return
 
     # Admin Panel (Pure Inline Transition)
-    if "ADMIN PANEL" in text and is_admin(uid):
+    if action == "ADMIN PANEL" and is_admin(uid):
         context.user_data["admin_mode"] = "main"
         admin_text = get_admin_panel_text()
         await update.message.reply_text(
@@ -2388,6 +2512,32 @@ async def leaderboard_command_slash(update: Update, context: ContextTypes.DEFAUL
 
 # ==================== START & CALLBACK SECTION ====================
 
+async def ensure_group_membership(update, context):
+    uid = update.effective_user.id
+    try:
+        chat_member = await context.bot.get_chat_member(OTP_GROUP_ID, uid)
+        status = getattr(chat_member, "status", "")
+        if membership_allows_access(status):
+            return True
+    except Exception as e:
+        print(f"Group membership check error: {e}")
+
+    join_markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔗 JOIN OTP GROUP", url=OTP_GROUP_LINK, style="primary")],
+        [InlineKeyboardButton("📢 OFFICIAL CHANNEL", url=OFFICIAL_CHANNEL_LINK, style="primary")],
+        [InlineKeyboardButton("🧩 PANEL", url=PANEL_LINK, style="primary")]
+    ])
+    try:
+        await update.message.reply_text(
+            "⚠️ <b>PLEASE JOIN THE OTP GROUP FIRST</b> ⚠️\n\nJoin the group and then use /start again.",
+            parse_mode="HTML",
+            reply_markup=join_markup
+        )
+    except Exception:
+        pass
+    return False
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     uid_str = str(uid)
@@ -2424,6 +2574,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 print(f"Referral error: {e}")
 
     context.user_data.clear()
+    if not await ensure_group_membership(update, context):
+        return
+
     await update.message.reply_text(WELCOME_MESSAGE, parse_mode="Markdown")
     await update.message.reply_text("🔹 PLEASE USE THE BUTTONS BELOW:", reply_markup=main_keyboard(uid))
 
@@ -2584,6 +2737,15 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["remove_balance_mode"] = True
         await query.message.edit_text(
             "💸 <b>REMOVE BALANCE</b>\n───────────────────\nPlease send the Telegram ID to remove balance:",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(make_bold_unicode("❌ CANCEL"), callback_data="adm_menu_sys_config", style="danger")]])
+        )
+        return
+
+    if data == "adm_sys_bot_settings":
+        context.user_data["admin_state"] = "waiting_for_bot_settings"
+        await query.message.edit_text(
+            "⚙️ <b>BOT SETTINGS</b>\n───────────────────\nSend settings in this format:\n\notp_rate 1.5\nreferral_price 5\nmin_withdraw 75\nmax_withdraw 5000",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(make_bold_unicode("❌ CANCEL"), callback_data="adm_menu_sys_config", style="danger")]])
         )
@@ -2934,7 +3096,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if r_text:
             try:
                 await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("📢 OTP GROUP", url="https://t.me/MinoXSupport0", style="primary")
+                    InlineKeyboardButton("📢 OTP GROUP", url=OTP_GROUP_LINK, style="primary"),
+                    InlineKeyboardButton("📣 OFFICIAL CHANNEL", url=OFFICIAL_CHANNEL_LINK, style="primary")
                 ]]))
             except:
                 pass
@@ -3030,7 +3193,42 @@ async def post_init(application):
         asyncio.create_task(worker())
     asyncio.create_task(monitor_loop(application))
 
+
+def ensure_single_instance():
+    lock_path = os.path.join(tempfile.gettempdir(), "apexverifybot.lock")
+    lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(lock_fd)
+        print("⚠️ Another bot instance is already running. Exiting.")
+        sys.exit(0)
+    with open(lock_path, "w", encoding="utf-8") as fh:
+        fh.write(str(os.getpid()))
+    return lock_path, lock_fd
+
+
+def remove_lock(lock_path, lock_fd=None):
+    try:
+        if lock_fd is not None:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
+        if lock_path and os.path.exists(lock_path):
+            os.remove(lock_path)
+    except Exception:
+        pass
+
+
 def main():
+    lock_path, lock_fd = ensure_single_instance()
+
+    def shutdown_handler(signum, frame):
+        remove_lock(lock_path, lock_fd)
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGINT, shutdown_handler)
+    signal.signal(signal.SIGTERM, shutdown_handler)
+
     app = ApplicationBuilder().token(BOT_TOKEN).concurrent_updates(True).post_init(post_init).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -3044,7 +3242,10 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
     print("🚀 BOT RUNNING...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    try:
+        app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    finally:
+        remove_lock(lock_path, lock_fd)
 
 if __name__ == "__main__":
     main()
