@@ -387,6 +387,8 @@ def get_menu_action(text):
         return "REFER AND EARN"
     if normalized == "PROFILE":
         return "PROFILE"
+    if normalized == "WITHDRAW":
+        return "WITHDRAW"
     if normalized == "LEADERBOARD":
         return "LEADERBOARD"
     if normalized == "SUPPORT":
@@ -778,7 +780,10 @@ def main_keyboard(user_id):
             KeyboardButton(text=f"👥 {make_bold_unicode('REFER AND EARN')}", style="primary"),
             KeyboardButton(text=f"👤 {make_bold_unicode('PROFILE')}", style="primary")
         ],
-        [KeyboardButton(text=f"🏆 {make_bold_unicode('LEADERBOARD')}", style="primary")],
+        [
+            KeyboardButton(text=f"💸 {make_bold_unicode('WITHDRAW')}", style="primary"),
+            KeyboardButton(text=f"🏆 {make_bold_unicode('LEADERBOARD')}", style="primary")
+        ],
         [KeyboardButton(text=f"💬 {make_bold_unicode('SUPPORT')}", style="primary")]
     ]
 
@@ -1741,6 +1746,30 @@ async def refer_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ==================== WITHDRAW FUNCTIONS ====================
 
+def format_withdraw_style(text):
+    return f"✨ {text} ✨"
+
+async def start_withdraw_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    balance = get_user(uid)['balance']
+    if balance < MIN_WITHDRAW:
+        await update.message.reply_text(
+            f"⚠️ YOUR BALANCE IS TOO LOW FOR WITHDRAWAL.\n\n"
+            f"<blockquote>💵 BALANCE: {format_balance(balance)} BDT\n"
+            f"📉 MIN WITHDRAW: {MIN_WITHDRAW} BDT</blockquote>",
+            parse_mode="HTML",
+            reply_markup=main_keyboard(uid)
+        )
+        return
+
+    context.user_data["withdraw_mode"] = "select_method"
+    await update.message.reply_text(
+        "💳 <b>WITHDRAW REQUEST</b> 💳\n\n"
+        "<blockquote>SELECT YOUR PAYMENT METHOD AND FOLLOW THE STEPS.</blockquote>",
+        parse_mode="HTML",
+        reply_markup=withdraw_method_keyboard()
+    )
+
 async def withdraw_method_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     uid = update.effective_user.id
@@ -1750,15 +1779,58 @@ async def withdraw_method_selected(update: Update, context: ContextTypes.DEFAULT
         await update.message.reply_text("❌ WITHDRAW CANCELLED", reply_markup=main_keyboard(uid))
         return
 
-    method_map = {"📱 BKASH": "BKASH", "💵 NAGAD": "NAGAD", "🚀 ROCKET": "ROCKET", "🏦 BINANCE": "BINANCE"}
-    if text in method_map:
+    method_map = {
+        "BKASH": "BKASH",
+        "NAGAD": "NAGAD",
+        "ROCKET": "ROCKET",
+        "BINANCE": "BINANCE"
+    }
+    method_key = normalize_menu_text(text).replace(" ", "")
+    selected_method = method_map.get(method_key) or method_map.get(normalize_menu_text(text).strip())
+
+    if selected_method:
         balance = get_user(uid)['balance']
-        context.user_data["withdraw_method"] = method_map[text]
+        context.user_data["withdraw_method"] = selected_method
+        context.user_data["withdraw_mode"] = "amount"
+        msg = (
+            f"<blockquote>💸 ENTER AMOUNT\n"
+            f"💵 TOTAL BALANCE: {format_balance(balance)} BDT\n"
+            f"📉 MINIMUM WITHDRAW: {MIN_WITHDRAW} BDT\n"
+            f"📌 USE NUMBERS ONLY</blockquote>"
+        )
+        await update.message.reply_text(msg, parse_mode="HTML", reply_markup=cancel_keyboard())
+    else:
+        await update.message.reply_text("⚠️ PLEASE SELECT A VALID PAYMENT METHOD!", reply_markup=withdraw_method_keyboard())
+
+async def withdraw_method_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    uid = update.effective_user.id
+
+    if text == "❌ CANCEL":
+        context.user_data["withdraw_mode"] = None
+        await update.message.reply_text("❌ WITHDRAW CANCELLED", reply_markup=main_keyboard(uid))
+        return
+
+    method_map = {
+        "BKASH": "BKASH",
+        "NAGAD": "NAGAD",
+        "ROCKET": "ROCKET",
+        "BINANCE": "BINANCE"
+    }
+    method_key = normalize_menu_text(text).replace(" ", "")
+    selected_method = method_map.get(method_key)
+    if not selected_method:
+        selected_method = method_map.get(normalize_menu_text(text).strip())
+
+    if selected_method:
+        balance = get_user(uid)['balance']
+        context.user_data["withdraw_method"] = selected_method
         context.user_data["withdraw_mode"] = "amount"
         msg = (
             f"<blockquote>💸 SEND YOUR AMOUNT!\n"
-            f"💵 TOTAL BALANCE: {format_balance(balance)} BDT</blockquote>\n\n"
-            f"<blockquote>📉 MINIMUM WITHDRAW {MIN_WITHDRAW} BDT</blockquote>"
+            f"💵 TOTAL BALANCE: {format_balance(balance)} BDT\n"
+            f"📉 MINIMUM WITHDRAW: {MIN_WITHDRAW} BDT\n"
+            f"📌 USE NUMBERS ONLY</blockquote>"
         )
         await update.message.reply_text(msg, parse_mode="HTML", reply_markup=cancel_keyboard())
     else:
@@ -2363,11 +2435,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     action = get_menu_action(text)
 
-    if action in {"GET NUMBER", "REFER AND EARN", "PROFILE", "LEADERBOARD", "SUPPORT", "ADMIN PANEL"}:
+    if action in {"GET NUMBER", "REFER AND EARN", "PROFILE", "WITHDRAW", "LEADERBOARD", "SUPPORT", "ADMIN PANEL"}:
         if not await ensure_group_membership(update, context):
             return
 
     # PROFILE বাটন ডিটেকশন (এখান থেকেই ব্যালেন্স এবং উইথড্র ইনলাইন বাটন হ্যান্ডেল করা হয়েছে)
+    if action == "WITHDRAW":
+        await start_withdraw_flow(update, context)
+        return
+
     if action == "PROFILE":
         user_data = get_user(uid)
         stats = get_user_stats(uid)
@@ -3362,6 +3438,7 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).concurrent_updates(True).post_init(post_init).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_error_handler(error_handler)
     app.add_handler(CommandHandler("get1number", get1number_command))
     app.add_handler(CommandHandler("balance", balance_command))
     app.add_handler(CommandHandler("profile", profile_command))
